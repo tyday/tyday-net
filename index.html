@@ -83,6 +83,12 @@
     transition: opacity 0.4s ease;
   }
   .hint.found { color: var(--accent); opacity: 1; }
+  .bg-switch {
+    margin: 0.4rem 0 0;
+    font-size: 0.78rem;
+    opacity: 0.7;
+  }
+  .bg-switch a { color: var(--dim); }
 
   a { color: var(--fg); text-decoration: underline; text-decoration-color: var(--dim); text-underline-offset: 3px; }
   a:hover { text-decoration-color: var(--fg); }
@@ -122,137 +128,185 @@
   </p>
 
   <p class="hint" id="hint">move your cursor around for a bit</p>
+  <p class="bg-switch"><a href="#" id="bg-toggle" hidden></a></p>
 </main>
 
+<script src="guild-ambient.js"></script>
 <script>
 (function () {
   var canvas = document.getElementById('court');
   var hint = document.getElementById('hint');
+  var toggle = document.getElementById('bg-toggle');
   var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduceMotion) return;
 
-  var ctx = canvas.getContext('2d');
-  var W, H, dpr;
+  // Two backgrounds: pong, or a dungeon crawl from the guild game.
+  // One is picked at random on each visit; the link below the post switches.
+  var HINTS = {
+    pong: 'move your cursor around for a bit',
+    dungeon: 'somewhere behind this page, five adventurers are looking for treasure'
+  };
+  var current = null;
+  var stopCurrent = null;
 
-  function resize() {
-    dpr = window.devicePixelRatio || 1;
-    W = window.innerWidth;
-    H = window.innerHeight;
-    canvas.width = W * dpr;
-    canvas.height = H * dpr;
-    canvas.style.width = W + 'px';
-    canvas.style.height = H + 'px';
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  function show(name) {
+    if (stopCurrent) stopCurrent();
+    current = name;
+    stopCurrent = name === 'dungeon' ? GuildAmbient.start(canvas) : startPong();
+    hint.classList.remove('found');
+    hint.textContent = HINTS[name];
+    toggle.textContent = name === 'dungeon' ? 'switch to pong' : 'switch to the dungeon';
+    toggle.hidden = false;
   }
-  window.addEventListener('resize', resize);
-  resize();
 
-  var PADDLE_W = 10, PADDLE_H = 70, MARGIN = 28, BALL_R = 6;
-  var SPEED = 2.1; // slow, ambient pace
+  toggle.addEventListener('click', function (e) {
+    e.preventDefault();
+    show(current === 'dungeon' ? 'pong' : 'dungeon');
+  });
 
-  var ball = { x: W / 2, y: H / 2, vx: SPEED, vy: SPEED * 0.6 };
-  var left = { y: H / 2 };   // AI paddle
-  var right = { y: H / 2 };  // player paddle, follows mouse
-  var targetRightY = H / 2;
-  var mouseActive = false;
-  var moveEvents = 0;
-  var lastMoveTime = performance.now();
-  var IDLE_MS = 3000; // no movement for this long -> paddle plays itself
+  // If the dungeon script didn't load, stick with pong and hide the switch.
+  if (typeof GuildAmbient === 'undefined') {
+    stopCurrent = startPong();
+    return;
+  }
+  show(Math.random() < 0.5 ? 'dungeon' : 'pong');
 
-  window.addEventListener('mousemove', function (e) {
-    targetRightY = e.clientY;
-    lastMoveTime = performance.now();
-    if (!mouseActive) mouseActive = true;
-    moveEvents++;
-    if (moveEvents > 12 && hint) {
-      hint.classList.add('found');
-      hint.textContent = "found it. that's pong.";
+  // The original pong background. Returns a function that switches it off.
+  function startPong() {
+    var ctx = canvas.getContext('2d');
+    var W, H, dpr;
+
+    function resize() {
+      dpr = window.devicePixelRatio || 1;
+      W = window.innerWidth;
+      H = window.innerHeight;
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      canvas.style.width = W + 'px';
+      canvas.style.height = H + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
-  }, { passive: true });
+    window.addEventListener('resize', resize);
+    resize();
+    var frameId;
 
-  window.addEventListener('touchmove', function (e) {
-    if (e.touches && e.touches[0]) {
-      targetRightY = e.touches[0].clientY;
+    var PADDLE_W = 10, PADDLE_H = 70, MARGIN = 28, BALL_R = 6;
+    var SPEED = 2.1; // slow, ambient pace
+
+    var ball = { x: W / 2, y: H / 2, vx: SPEED, vy: SPEED * 0.6 };
+    var left = { y: H / 2 };   // AI paddle
+    var right = { y: H / 2 };  // player paddle, follows mouse
+    var targetRightY = H / 2;
+    var mouseActive = false;
+    var moveEvents = 0;
+    var lastMoveTime = performance.now();
+    var IDLE_MS = 3000; // no movement for this long -> paddle plays itself
+
+    function onMouseMove(e) {
+      targetRightY = e.clientY;
       lastMoveTime = performance.now();
+      if (!mouseActive) mouseActive = true;
+      moveEvents++;
+      if (moveEvents > 12 && hint) {
+        hint.classList.add('found');
+        hint.textContent = "found it. that's pong.";
+      }
     }
-  }, { passive: true });
+    window.addEventListener('mousemove', onMouseMove, { passive: true });
 
-  function resetBall(direction) {
-    ball.x = W / 2;
-    ball.y = H / 2 + (Math.random() * 120 - 60);
-    ball.vx = SPEED * direction;
-    ball.vy = SPEED * (Math.random() * 0.8 - 0.4);
-  }
-  resetBall(1);
-
-  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-
-  function step() {
-    // player paddle eases toward the mouse, doesn't snap — keeps it feeling ambient.
-    // if there's been no cursor movement for a while, it plays itself off the ball instead
-    var idle = (performance.now() - lastMoveTime) > IDLE_MS;
-    var rightTarget = idle
-      ? clamp(ball.y, PADDLE_H / 2, H - PADDLE_H / 2)
-      : clamp(targetRightY, PADDLE_H / 2, H - PADDLE_H / 2);
-    right.y += (rightTarget - right.y) * (idle ? 0.05 : 0.08);
-
-    // simple AI paddle, deliberately a little imperfect and unhurried
-    var aiTarget = clamp(ball.y, PADDLE_H / 2, H - PADDLE_H / 2);
-    left.y += (aiTarget - left.y) * 0.045;
-
-    ball.x += ball.vx;
-    ball.y += ball.vy;
-
-    if (ball.y < BALL_R) { ball.y = BALL_R; ball.vy *= -1; }
-    if (ball.y > H - BALL_R) { ball.y = H - BALL_R; ball.vy *= -1; }
-
-    // left paddle collision
-    if (ball.x - BALL_R < MARGIN + PADDLE_W && ball.x - BALL_R > MARGIN &&
-        ball.y > left.y - PADDLE_H / 2 && ball.y < left.y + PADDLE_H / 2 && ball.vx < 0) {
-      ball.vx *= -1;
-      ball.vy += (ball.y - left.y) * 0.02;
+    function onTouchMove(e) {
+      if (e.touches && e.touches[0]) {
+        targetRightY = e.touches[0].clientY;
+        lastMoveTime = performance.now();
+      }
     }
-    // right paddle collision
-    if (ball.x + BALL_R > W - MARGIN - PADDLE_W && ball.x + BALL_R < W - MARGIN &&
-        ball.y > right.y - PADDLE_H / 2 && ball.y < right.y + PADDLE_H / 2 && ball.vx > 0) {
-      ball.vx *= -1;
-      ball.vy += (ball.y - right.y) * 0.02;
+    window.addEventListener('touchmove', onTouchMove, { passive: true });
+
+    function resetBall(direction) {
+      ball.x = W / 2;
+      ball.y = H / 2 + (Math.random() * 120 - 60);
+      ball.vx = SPEED * direction;
+      ball.vy = SPEED * (Math.random() * 0.8 - 0.4);
+    }
+    resetBall(1);
+
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+    function step() {
+      // player paddle eases toward the mouse, doesn't snap — keeps it feeling ambient.
+      // if there's been no cursor movement for a while, it plays itself off the ball instead
+      var idle = (performance.now() - lastMoveTime) > IDLE_MS;
+      var rightTarget = idle
+        ? clamp(ball.y, PADDLE_H / 2, H - PADDLE_H / 2)
+        : clamp(targetRightY, PADDLE_H / 2, H - PADDLE_H / 2);
+      right.y += (rightTarget - right.y) * (idle ? 0.05 : 0.08);
+
+      // simple AI paddle, deliberately a little imperfect and unhurried
+      var aiTarget = clamp(ball.y, PADDLE_H / 2, H - PADDLE_H / 2);
+      left.y += (aiTarget - left.y) * 0.045;
+
+      ball.x += ball.vx;
+      ball.y += ball.vy;
+
+      if (ball.y < BALL_R) { ball.y = BALL_R; ball.vy *= -1; }
+      if (ball.y > H - BALL_R) { ball.y = H - BALL_R; ball.vy *= -1; }
+
+      // left paddle collision
+      if (ball.x - BALL_R < MARGIN + PADDLE_W && ball.x - BALL_R > MARGIN &&
+          ball.y > left.y - PADDLE_H / 2 && ball.y < left.y + PADDLE_H / 2 && ball.vx < 0) {
+        ball.vx *= -1;
+        ball.vy += (ball.y - left.y) * 0.02;
+      }
+      // right paddle collision
+      if (ball.x + BALL_R > W - MARGIN - PADDLE_W && ball.x + BALL_R < W - MARGIN &&
+          ball.y > right.y - PADDLE_H / 2 && ball.y < right.y + PADDLE_H / 2 && ball.vx > 0) {
+        ball.vx *= -1;
+        ball.vy += (ball.y - right.y) * 0.02;
+      }
+
+      // off-screen — loop forever, no score, just ambient
+      if (ball.x < -30) resetBall(1);
+      if (ball.x > W + 30) resetBall(-1);
+
+      draw();
+      frameId = requestAnimationFrame(step);
     }
 
-    // off-screen — loop forever, no score, just ambient
-    if (ball.x < -30) resetBall(1);
-    if (ball.x > W + 30) resetBall(-1);
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
 
-    draw();
-    requestAnimationFrame(step);
+      var courtColor = mouseActive ? '#52565d' : '#3a3d42';
+
+      // center line
+      ctx.strokeStyle = courtColor;
+      ctx.globalAlpha = 0.35;
+      ctx.setLineDash([6, 10]);
+      ctx.beginPath();
+      ctx.moveTo(W / 2, 0);
+      ctx.lineTo(W / 2, H);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = courtColor;
+      ctx.fillRect(MARGIN, left.y - PADDLE_H / 2, PADDLE_W, PADDLE_H);
+      ctx.fillRect(W - MARGIN - PADDLE_W, right.y - PADDLE_H / 2, PADDLE_W, PADDLE_H);
+
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    frameId = requestAnimationFrame(step);
+
+    return function stop() {
+      cancelAnimationFrame(frameId);
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('touchmove', onTouchMove);
+      ctx.clearRect(0, 0, W, H);
+    };
   }
-
-  function draw() {
-    ctx.clearRect(0, 0, W, H);
-
-    var courtColor = mouseActive ? '#52565d' : '#3a3d42';
-
-    // center line
-    ctx.strokeStyle = courtColor;
-    ctx.globalAlpha = 0.35;
-    ctx.setLineDash([6, 10]);
-    ctx.beginPath();
-    ctx.moveTo(W / 2, 0);
-    ctx.lineTo(W / 2, H);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
-
-    ctx.fillStyle = courtColor;
-    ctx.fillRect(MARGIN, left.y - PADDLE_H / 2, PADDLE_W, PADDLE_H);
-    ctx.fillRect(W - MARGIN - PADDLE_W, right.y - PADDLE_H / 2, PADDLE_W, PADDLE_H);
-
-    ctx.beginPath();
-    ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  requestAnimationFrame(step);
 })();
 </script>
 
