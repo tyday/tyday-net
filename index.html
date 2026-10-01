@@ -105,6 +105,11 @@
   a:hover { text-decoration-color: var(--fg); }
   a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+  /* A screen of empty space after the text, so you can scroll past it and watch. */
+  @media (prefers-reduced-motion: no-preference) {
+    main { margin-bottom: 100vh; margin-bottom: 100svh; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     #court { display: none; }
   }
@@ -318,7 +323,7 @@
   // One is picked at random on each visit; the link below the post switches.
   var HINTS = {
     pong: 'move your cursor around for a bit',
-    dungeon: 'somewhere behind this page, five adventurers are looking for treasure'
+    dungeon: 'somewhere behind this page, five adventurers are looking for treasure. scroll down to watch them.'
   };
   var current = null;
   var stopCurrent = null;
